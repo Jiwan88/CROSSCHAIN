@@ -1,0 +1,38 @@
+{
+  "name": "crosschain-bridge",
+  "version": "1.0.0",
+  "description": "Cross-chain bridge between Hyperledger Fabric and Ethereum (Besu)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.0",
+    "@hyperledger/fabric-gateway": "^1.4.0",
+    "@hyperledger/fabric-protos": "^0.2.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "fs": "^0.0.1-security",
+    "path": "^0.12.7",
+    "web3": "^4.3.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "blockchain",
+    "crosschain",
+    "hyperledger-fabric",
+    "ethereum",
+    "besu",
+    "bridge"
+  ],
+  "author": "CrossChain Bridge",
+  "license": "MIT"
+}
