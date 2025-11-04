@@ -6,6 +6,8 @@ module.exports = {
     RPC_URL: process.env.ETHEREUM_RPC_URL || 'http://localhost:8545',
     WS_URL: process.env.ETHEREUM_WS_URL || 'ws://localhost:8546',
     PRIVATE_KEY: process.env.ETHEREUM_PRIVATE_KEY || '0x8f2a55949038a9610f50fb23b5883af3b4ecb3c3bb792cbcefbd1542c692be63',
+    PRIVATE_KEYS: process.env.ETHEREUM_PRIVATE_KEYS || '',
+    KEYSTORE_DIR: process.env.ETHEREUM_KEYSTORE_DIR || path.resolve(__dirname, '../wallet/eth-keystore'),
     BRIDGE_CONTRACT_ADDRESS: process.env.BRIDGE_CONTRACT_ADDRESS || '',
     GAS_LIMIT: 3000000,
     GAS_PRICE: '0x4a817c800' // 20 gwei

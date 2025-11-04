@@ -22,12 +22,12 @@ class BridgeAPI {
     this.app.get('/', (req, res) => {
       res.status(200).send(
         '<html><body style="font-family: sans-serif;">' +
-          '<h3>Cross-Chain Bridge API</h3>' +
-          '<ul>' +
-            '<li><a href="/health">/health</a></li>' +
-            '<li><a href="/status">/status</a></li>' +
-          '</ul>' +
-          '<p>Frontend (if running): http://localhost:5173</p>' +
+        '<h3>Cross-Chain Bridge API</h3>' +
+        '<ul>' +
+        '<li><a href="/health">/health</a></li>' +
+        '<li><a href="/status">/status</a></li>' +
+        '</ul>' +
+        '<p>Frontend (if running): http://localhost:5173</p>' +
         '</body></html>'
       );
     });
@@ -49,6 +49,58 @@ class BridgeAPI {
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
+    });
+
+    // List Ethereum accounts
+    this.app.get('/ethereum/accounts', (req, res) => {
+      try {
+        const accounts = this.bridge.ethereumClient.getAccounts();
+        res.json(accounts);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Create N Ethereum accounts, optionally persist V3 keystore with password
+    this.app.post('/ethereum/accounts', async (req, res) => {
+      try {
+        const { count, keystorePassword } = req.body || {};
+        const created = await this.bridge.ethereumClient.createAccounts(count || 1, keystorePassword || null);
+        res.json({ success: true, created });
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Import hex private keys
+    this.app.post('/ethereum/accounts/import', (req, res) => {
+      try {
+        const { privateKeys } = req.body || {};
+        if (!Array.isArray(privateKeys) || privateKeys.length === 0) {
+          return res.status(400).json({ error: 'privateKeys must be a non-empty array' });
+        }
+        const addresses = this.bridge.ethereumClient.importPrivateKeys(privateKeys);
+        res.json({ success: true, addresses });
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Load keystores from configured KEYSTORE_DIR using password
+    this.app.post('/ethereum/accounts/load-keystore', (req, res) => {
+      try {
+        const { password } = req.body || {};
+        if (!password) return res.status(400).json({ error: 'password is required' });
+        const addresses = this.bridge.ethereumClient.loadKeystore(password);
+        res.json({ success: true, addresses });
+      } catch (error) {
+        res.status(400).json({ error: error.message });
+      }
+    });
+
+    // Recent events
+    this.app.get('/events', (req, res) => {
+      res.json(this.bridge.recentEvents || []);
     });
 
     // Create cross-chain asset
@@ -81,6 +133,16 @@ class BridgeAPI {
       try {
         const assets = await this.bridge.fabricClient.getAllAssets();
         res.json(assets);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // List Fabric users (local wallet identities)
+    this.app.get('/fabric/users', (req, res) => {
+      try {
+        const users = this.bridge.fabricClient.listUsers();
+        res.json(users);
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -119,6 +181,20 @@ class BridgeAPI {
       }
     });
 
+    // Create Fabric asset directly (helper)
+    this.app.post('/fabric/assets', async (req, res) => {
+      try {
+        const { assetId, owner, amount } = req.body;
+        if (!assetId || !owner) {
+          return res.status(400).json({ error: 'assetId and owner are required' });
+        }
+        const result = await this.bridge.fabricClient.createAsset(assetId, owner, amount || '0');
+        res.json({ success: true, result });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Get Ethereum balance
     this.app.get('/ethereum/balance/:address', async (req, res) => {
       try {
@@ -152,6 +228,46 @@ class BridgeAPI {
       }
     });
 
+    // ERC-20 routes
+    this.app.get('/erc20/address', (req, res) => {
+      res.json({ token: this.bridge.ethereumClient?.deployed?.tokenAddress, bridge: this.bridge.ethereumClient?.deployed?.bridgeAddress });
+    });
+    this.app.get('/erc20/balance/:address', async (req, res) => {
+      try {
+        const bal = await this.bridge.ethereumClient.erc20BalanceOf(req.params.address);
+        res.json({ address: req.params.address, balance: bal });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+    this.app.post('/erc20/transfer', async (req, res) => {
+      try {
+        const { to, amount } = req.body;
+        const r = await this.bridge.ethereumClient.erc20Transfer(to, amount);
+        res.json({ success: true, transactionHash: r.transactionHash });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+    this.app.post('/erc20/mint', async (req, res) => {
+      try {
+        const { to, amount } = req.body;
+        const r = await this.bridge.ethereumClient.erc20Mint(to, amount);
+        res.json({ success: true, transactionHash: r.transactionHash });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+    this.app.post('/bridge/lock', async (req, res) => {
+      try {
+        const { amount, targetFabricUser } = req.body;
+        const r = await this.bridge.ethereumClient.bridgeLock(amount, targetFabricUser);
+        res.json({ success: true, transactionHash: r.transactionHash });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Error handling middleware
     this.app.use((error, req, res, next) => {
       console.error('API Error:', error);
@@ -172,6 +288,14 @@ class BridgeAPI {
       this.bridge.initialize().catch((error) => {
         console.error('Bridge initialization failed (server still running):', error.message || error);
       });
+
+      // After init, try to load deployed ERC-20/Bridge addresses
+      setTimeout(() => {
+        try {
+          const ok = this.bridge.ethereumClient.loadDeployedContracts();
+          if (ok) console.log('✅ Loaded deployed ERC-20/Bridge addresses');
+        } catch (_) { }
+      }, 1500);
     } catch (error) {
       console.error('Failed to start API server:', error);
       process.exit(1);

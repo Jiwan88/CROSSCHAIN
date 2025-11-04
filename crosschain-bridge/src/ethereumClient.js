@@ -1,5 +1,7 @@
 const { Web3 } = require('web3');
 const config = require('./config');
+const fs = require('fs');
+const path = require('path');
 
 class EthereumClient {
   constructor() {
@@ -8,6 +10,9 @@ class EthereumClient {
     this.accounts = [];
     this.bridgeContract = null;
     this.isConnected = false;
+    this.erc20 = null;
+    this.bridge = null;
+    this.deployed = null;
   }
 
   async connect() {
@@ -20,11 +25,32 @@ class EthereumClient {
 
       // Get accounts
       this.accounts = await this.web3.eth.getAccounts();
-      if (this.accounts.length === 0 && config.ETHEREUM.PRIVATE_KEY) {
-        // Derive address from private key explicitly, then add to wallet
-        const account = this.web3.eth.accounts.privateKeyToAccount(config.ETHEREUM.PRIVATE_KEY);
-        this.web3.eth.accounts.wallet.add(account);
-        this.accounts = [account.address];
+      // Load multiple private keys if provided
+      const keysCsv = (config.ETHEREUM.PRIVATE_KEYS || '').trim();
+      if (keysCsv) {
+        const keys = keysCsv.split(/[,\s]+/).map(k => k.trim()).filter(Boolean);
+        for (const key of keys) {
+          try {
+            const acc = this.web3.eth.accounts.privateKeyToAccount(key);
+            this.web3.eth.accounts.wallet.add(acc);
+          } catch (e) {
+            console.warn('Skipping invalid private key:', e.message);
+          }
+        }
+      }
+      if (this.accounts.length === 0) {
+        // Fallback to single PRIVATE_KEY if no RPC accounts are unlocked
+        if (config.ETHEREUM.PRIVATE_KEY) {
+          const account = this.web3.eth.accounts.privateKeyToAccount(config.ETHEREUM.PRIVATE_KEY);
+          this.web3.eth.accounts.wallet.add(account);
+        }
+        // Consolidate addresses from wallet
+        const walletAddrs = [];
+        for (let i = 0; i < this.web3.eth.accounts.wallet.length; i++) {
+          const it = this.web3.eth.accounts.wallet[i];
+          if (it && it.address) walletAddrs.push(it.address);
+        }
+        this.accounts = walletAddrs;
       }
       if (this.accounts.length === 0) {
         throw new Error('No accounts available (RPC personal disabled and no PRIVATE_KEY provided)');
@@ -48,6 +74,113 @@ class EthereumClient {
     } catch (error) {
       console.error('❌ Failed to connect to Ethereum:', error.message);
       throw error;
+    }
+  }
+
+  getAccounts() {
+    return this.accounts || [];
+  }
+
+  /**
+   * Create N new random accounts, optionally persisting each as a V3 keystore JSON file.
+   * Returns array of { address, privateKey, keystorePath? }
+   */
+  async createAccounts(count = 1, keystorePassword = null) {
+    const created = [];
+    const num = Number(count) || 1;
+    if (num < 1 || num > 50) {
+      throw new Error('count must be between 1 and 50');
+    }
+
+    const outDir = config.ETHEREUM.KEYSTORE_DIR;
+    if (keystorePassword) {
+      if (!fs.existsSync(outDir)) {
+        fs.mkdirSync(outDir, { recursive: true });
+      }
+    }
+
+    for (let i = 0; i < num; i++) {
+      const acct = this.web3.eth.accounts.create();
+      // add to in-memory wallet and local list
+      this.web3.eth.accounts.wallet.add(acct);
+      this.accounts.push(acct.address);
+
+      let keystorePath = null;
+      if (keystorePassword) {
+        const ks = this.web3.eth.accounts.encrypt(acct.privateKey, keystorePassword);
+        const fileName = `UTC--${new Date().toISOString().replace(/[:.]/g, '-')}--${acct.address.replace('0x', '')}.json`;
+        keystorePath = path.join(outDir, fileName);
+        fs.writeFileSync(keystorePath, JSON.stringify(ks, null, 2));
+      }
+
+      created.push({ address: acct.address, privateKey: acct.privateKey, keystorePath });
+    }
+
+    // ensure unique accounts list
+    this.accounts = Array.from(new Set(this.accounts));
+    return created;
+  }
+
+  /**
+   * Import an array of hex private keys. Returns imported addresses.
+   */
+  importPrivateKeys(keys = []) {
+    if (!Array.isArray(keys)) throw new Error('keys must be an array');
+    const addresses = [];
+    for (const key of keys) {
+      const k = String(key).startsWith('0x') ? String(key) : '0x' + String(key);
+      const acct = this.web3.eth.accounts.privateKeyToAccount(k);
+      this.web3.eth.accounts.wallet.add(acct);
+      this.accounts.push(acct.address);
+      addresses.push(acct.address);
+    }
+    this.accounts = Array.from(new Set(this.accounts));
+    return addresses;
+  }
+
+  /**
+   * Load and decrypt all keystore files in KEYSTORE_DIR using the given password.
+   * Returns loaded addresses.
+   */
+  loadKeystore(password) {
+    if (!password) throw new Error('password is required');
+    const dir = config.ETHEREUM.KEYSTORE_DIR;
+    if (!fs.existsSync(dir)) return [];
+    const files = fs.readdirSync(dir).filter(f => f.toLowerCase().endsWith('.json'));
+    const addresses = [];
+    for (const f of files) {
+      try {
+        const json = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+        const acct = this.web3.eth.accounts.decrypt(json, password);
+        this.web3.eth.accounts.wallet.add(acct);
+        this.accounts.push(acct.address);
+        addresses.push(acct.address);
+      } catch (e) {
+        console.warn(`Failed to decrypt keystore ${f}: ${e.message}`);
+      }
+    }
+    this.accounts = Array.from(new Set(this.accounts));
+    return addresses;
+  }
+
+  loadDeployedContracts() {
+    try {
+      const p = path.resolve(__dirname, '../contracts/addresses.json');
+      if (!fs.existsSync(p)) return false;
+      const json = JSON.parse(fs.readFileSync(p, 'utf8'));
+      this.deployed = json;
+      const erc20Abi = json.abi.token;
+      const bridgeAbi = json.abi.bridge;
+      if (json.tokenAddress) {
+        this.erc20 = new this.web3.eth.Contract(erc20Abi, json.tokenAddress);
+      }
+      if (json.bridgeAddress) {
+        this.bridge = new this.web3.eth.Contract(bridgeAbi, json.bridgeAddress);
+      }
+      return true;
+    } catch (e) {
+      console.error('Error loading deployed contracts:', e);
+      return false;
     }
   }
 
@@ -79,6 +212,37 @@ class EthereumClient {
       console.error('Error sending transaction:', error);
       throw error;
     }
+  }
+
+  // ERC-20 helpers
+  async erc20BalanceOf(address) {
+    if (!this.erc20) throw new Error('ERC-20 not configured');
+    const bal = await this.erc20.methods.balanceOf(address).call();
+    return this.web3.utils.fromWei(bal, 'ether');
+  }
+
+  async erc20Transfer(to, amountEth) {
+    if (!this.erc20) throw new Error('ERC-20 not configured');
+    const from = this.accounts[0];
+    const amount = this.web3.utils.toWei(String(amountEth), 'ether');
+    return await this.erc20.methods.transfer(to, amount).send({ from });
+  }
+
+  async erc20Mint(to, amountEth) {
+    if (!this.erc20) throw new Error('ERC-20 not configured');
+    const from = this.accounts[0];
+    const amount = this.web3.utils.toWei(String(amountEth), 'ether');
+    return await this.erc20.methods.mint(to, amount).send({ from });
+  }
+
+  // Bridge helpers
+  async bridgeLock(amountEth, targetFabricUser) {
+    if (!this.bridge || !this.erc20) throw new Error('Bridge/Token not configured');
+    const from = this.accounts[0];
+    const amount = this.web3.utils.toWei(String(amountEth), 'ether');
+    // Ensure allowance
+    await this.erc20.methods.approve(this.deployed.bridgeAddress, amount).send({ from });
+    return await this.bridge.methods.lock(amount, targetFabricUser).send({ from });
   }
 
   async deployContract(abi, bytecode, constructorArgs = []) {

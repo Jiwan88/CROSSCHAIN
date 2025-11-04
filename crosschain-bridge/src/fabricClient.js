@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const walletPath = path.resolve(__dirname, '../wallet');
 
 class FabricClient {
   constructor() {
@@ -153,6 +154,23 @@ class FabricClient {
     } catch (error) {
       console.error('Error getting all assets:', error);
       throw error;
+    }
+  }
+
+  // List local Fabric wallet identities (file-based)
+  listUsers() {
+    try {
+      if (!fs.existsSync(walletPath)) return [];
+      const files = fs.readdirSync(walletPath)
+        .filter(f => f.endsWith('.id') || f.endsWith('.json') || f.includes('User'));
+      const users = files.map(f => ({
+        id: path.basename(f).replace(/\.(id|json)$/i, ''),
+        file: path.join(walletPath, f)
+      }));
+      return users;
+    } catch (error) {
+      console.error('Error listing Fabric users:', error);
+      return [];
     }
   }
 

@@ -118,10 +118,19 @@ class CrossChainBridge {
 
   async getBridgeStatus() {
     try {
-      const ethereumBalance = await this.ethereumClient.getBalance(
-        this.ethereumClient.accounts[0]
-      );
+      // Ethereum summary (resilient if not initialized yet)
+      let ethereumConnected = !!this.ethereumClient && this.ethereumClient.isConnected;
+      let account = (this.ethereumClient && this.ethereumClient.accounts && this.ethereumClient.accounts[0]) || null;
+      let ethereumBalance = null;
+      try {
+        if (ethereumConnected && account) {
+          ethereumBalance = await this.ethereumClient.getBalance(account);
+        }
+      } catch (e) {
+        // leave balance null, but don't fail the whole status
+      }
 
+      // Fabric summary
       let fabricAssets = [];
       try {
         fabricAssets = await this.fabricClient.getAllAssets();
@@ -132,9 +141,9 @@ class CrossChainBridge {
 
       return {
         ethereum: {
-          connected: this.ethereumClient.isConnected,
+          connected: ethereumConnected,
           balance: ethereumBalance,
-          account: this.ethereumClient.accounts[0]
+          account: account,
         },
         fabric: {
           connected: this.fabricClient.isConnected,
