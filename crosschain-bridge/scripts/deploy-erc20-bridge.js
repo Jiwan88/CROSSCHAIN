@@ -40,6 +40,35 @@ async function main() {
     if (!deployer) throw new Error('No deployer account available (set ETHEREUM_PRIVATE_KEY)');
     console.log('Deployer:', deployer);
 
+    // Load existing addresses if they exist
+    const addressesPath = path.join(__dirname, '../contracts/addresses.json');
+    let existingAddresses = {};
+    if (fs.existsSync(addressesPath)) {
+        existingAddresses = JSON.parse(fs.readFileSync(addressesPath, 'utf8'));
+    }
+
+    // Deploy or use existing reputation contract
+    let reputationAddress = existingAddresses.reputationAddress;
+    const reputation = compile(path.join(__dirname, '../contracts/CrossTrustReputation.sol'), 'CrossTrustReputation');
+
+    if (!reputationAddress) {
+        console.log('Deploying CrossTrustReputation contract...');
+        const Reputation = new web3.eth.Contract(reputation.abi);
+        const reputationDeploy = Reputation.deploy({ data: reputation.bytecode });
+        const estReputation = await reputationDeploy.estimateGas({ from: deployer });
+        const gasReputation = Math.max(Math.floor(Number(estReputation) * 1.5), 6_000_000);
+        const reputationContract = await reputationDeploy.send({
+            from: deployer,
+            gas: gasReputation,
+            maxFeePerGas: 1_000_000_000,
+            maxPriorityFeePerGas: 0
+        });
+        reputationAddress = reputationContract.options.address;
+        console.log('CrossTrustReputation deployed at:', reputationAddress);
+    } else {
+        console.log('Using existing CrossTrustReputation at:', reputationAddress);
+    }
+
     const erc20 = compile(path.join(__dirname, '../contracts/ERC20Token.sol'), 'ERC20Token');
     const bridge = compile(path.join(__dirname, '../contracts/Bridge.sol'), 'Bridge');
 
@@ -52,7 +81,8 @@ async function main() {
     console.log('Token deployed at:', token.options.address);
 
     const Bridge = new web3.eth.Contract(bridge.abi);
-    const bridgeDeploy = Bridge.deploy({ data: bridge.bytecode, arguments: [token.options.address] });
+    // Bridge now requires both token and reputation contract addresses
+    const bridgeDeploy = Bridge.deploy({ data: bridge.bytecode, arguments: [token.options.address, reputationAddress] });
     const estBridge = await bridgeDeploy.estimateGas({ from: deployer });
     const gasBridge = Math.max(Math.floor(Number(estBridge) * 1.5), 6_000_000);
     const bridgeCtr = await bridgeDeploy.send({ from: deployer, gas: gasBridge, maxFeePerGas: 1_000_000_000, maxPriorityFeePerGas: 0 });
@@ -61,16 +91,29 @@ async function main() {
     // Approve bridge for large allowance by deployer
     await token.methods.approve(bridgeCtr.options.address, initialSupply).send({ from: deployer });
 
+    // Set bridge contract address in reputation contract
+    const ReputationContract = new web3.eth.Contract(reputation.abi, reputationAddress);
+    await ReputationContract.methods.setBridgeContract(bridgeCtr.options.address).send({ from: deployer });
+    console.log('✅ Set bridge contract address in reputation contract');
+
     const out = {
         tokenAddress: token.options.address,
         bridgeAddress: bridgeCtr.options.address,
+        reputationAddress: reputationAddress,
         networkId: Number(await web3.eth.net.getId()),
         deployedAt: new Date().toISOString(),
-        abi: { token: erc20.abi, bridge: bridge.abi },
+        abi: {
+            token: erc20.abi,
+            bridge: bridge.abi,
+            reputation: reputation.abi
+        },
     };
-    const outPath = path.join(__dirname, '../contracts/addresses.json');
-    fs.writeFileSync(outPath, JSON.stringify(out, null, 2));
-    console.log('Saved', outPath);
+    fs.writeFileSync(addressesPath, JSON.stringify(out, null, 2));
+    console.log('Saved', addressesPath);
+    console.log('\n✅ Deployment complete!');
+    console.log('Token:', token.options.address);
+    console.log('Bridge:', bridgeCtr.options.address);
+    console.log('Reputation:', reputationAddress);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

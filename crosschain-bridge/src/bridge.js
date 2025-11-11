@@ -1,11 +1,13 @@
 const EthereumClient = require('./ethereumClient');
 const FabricClient = require('./fabricClient');
+const ReputationClient = require('./reputationClient');
 const config = require('./config');
 
 class CrossChainBridge {
   constructor() {
     this.ethereumClient = new EthereumClient();
     this.fabricClient = new FabricClient();
+    this.reputationClient = new ReputationClient();
     this.isInitialized = false;
     this.pendingTransfers = new Map();
   }
@@ -17,6 +19,13 @@ class CrossChainBridge {
       // Connect to both networks
       await this.ethereumClient.connect();
       await this.fabricClient.connect();
+
+      // Connect to reputation contract (optional - won't fail if not deployed)
+      const reputationConnected = await this.reputationClient.connect();
+      if (!reputationConnected) {
+        console.warn('⚠️  Reputation system unavailable. Bridge will continue without it.');
+        console.warn('   To enable reputation system, deploy with: npm run deploy:reputation');
+      }
 
       // Set up event listeners
       this.setupEventListeners();
@@ -139,6 +148,26 @@ class CrossChainBridge {
         fabricAssets = [];
       }
 
+      // Reputation summary
+      let reputationStatus = null;
+      try {
+        if (this.reputationClient && this.reputationClient.isInitialized) {
+          const nodeCount = await this.reputationClient.getRegisteredNodeCount();
+          const validators = await this.reputationClient.selectValidators(3);
+          reputationStatus = {
+            connected: true,
+            registeredNodes: nodeCount,
+            validators: validators.length,
+            validatorAddresses: validators
+          };
+        } else {
+          reputationStatus = { connected: false, message: 'Reputation contract not deployed' };
+        }
+      } catch (err) {
+        console.warn('Reputation status fetch failed:', err?.message || err);
+        reputationStatus = { connected: false, error: err?.message || 'Unknown error' };
+      }
+
       return {
         ethereum: {
           connected: ethereumConnected,
@@ -150,6 +179,7 @@ class CrossChainBridge {
           assets: fabricAssets,
           channel: config.FABRIC.CHANNEL_NAME
         },
+        reputation: reputationStatus,
         bridge: {
           initialized: this.isInitialized,
           pendingTransfers: this.pendingTransfers.size
@@ -179,6 +209,104 @@ class CrossChainBridge {
       return true;
     } catch (error) {
       console.error('Error creating cross-chain asset:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get validators for a cross-chain transaction
+   * @returns {Promise<string[]>} Array of validator addresses
+   */
+  async getValidators(count = 3) {
+    try {
+      if (!this.reputationClient.isInitialized) {
+        const connected = await this.reputationClient.connect();
+        if (!connected) {
+          throw new Error('Reputation system not available. Deploy reputation contract first.');
+        }
+      }
+      return await this.reputationClient.selectValidators(count);
+    } catch (error) {
+      console.error('Error getting validators:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get trust score for a node
+   * @param {string} nodeAddress - Address of the node
+   * @returns {Promise<number>} Trust score (0-100)
+   */
+  async getTrustScore(nodeAddress) {
+    try {
+      if (!this.reputationClient.isInitialized) {
+        const connected = await this.reputationClient.connect();
+        if (!connected) {
+          throw new Error('Reputation system not available. Deploy reputation contract first.');
+        }
+      }
+      return await this.reputationClient.getTrustScore(nodeAddress);
+    } catch (error) {
+      console.error('Error getting trust score:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get full reputation data for a node
+   * @param {string} nodeAddress - Address of the node
+   * @returns {Promise<Object>} Reputation data
+   */
+  async getReputation(nodeAddress) {
+    try {
+      if (!this.reputationClient.isInitialized) {
+        const connected = await this.reputationClient.connect();
+        if (!connected) {
+          throw new Error('Reputation system not available. Deploy reputation contract first.');
+        }
+      }
+      return await this.reputationClient.getReputation(nodeAddress);
+    } catch (error) {
+      console.error('Error getting reputation:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all nodes sorted by trust score
+   * @returns {Promise<{nodes: string[], scores: number[]}>} Sorted nodes and scores
+   */
+  async getNodesSortedByTrustScore() {
+    try {
+      if (!this.reputationClient.isInitialized) {
+        const connected = await this.reputationClient.connect();
+        if (!connected) {
+          throw new Error('Reputation system not available. Deploy reputation contract first.');
+        }
+      }
+      return await this.reputationClient.getNodesSortedByTrustScore();
+    } catch (error) {
+      console.error('Error getting sorted nodes:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Register a node in the reputation system
+   * @param {string} nodeAddress - Address of the node to register
+   */
+  async registerNode(nodeAddress) {
+    try {
+      if (!this.reputationClient.isInitialized) {
+        const connected = await this.reputationClient.connect();
+        if (!connected) {
+          throw new Error('Reputation system not available. Deploy reputation contract first.');
+        }
+      }
+      const fromAddress = this.ethereumClient.accounts[0];
+      return await this.reputationClient.registerNode(nodeAddress, fromAddress);
+    } catch (error) {
+      console.error('Error registering node:', error);
       throw error;
     }
   }

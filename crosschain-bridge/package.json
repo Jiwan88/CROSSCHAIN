@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "jest",
-    "deploy:erc20": "node scripts/deploy-erc20-bridge.js"
+    "deploy:erc20": "node scripts/deploy-erc20-bridge.js",
+    "deploy:reputation": "node scripts/deploy-reputation.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",

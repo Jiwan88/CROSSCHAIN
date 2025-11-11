@@ -268,6 +268,69 @@ class BridgeAPI {
       }
     });
 
+    // Reputation system routes
+    // Get validators
+    this.app.get('/reputation/validators', async (req, res) => {
+      try {
+        const { count } = req.query;
+        const validators = await this.bridge.getValidators(count ? parseInt(count) : 3);
+        res.json({ validators, count: validators.length });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get trust score for a node
+    this.app.get('/reputation/trust-score/:address', async (req, res) => {
+      try {
+        const { address } = req.params;
+        const score = await this.bridge.getTrustScore(address);
+        res.json({ address, trustScore: score });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get full reputation data for a node
+    this.app.get('/reputation/:address', async (req, res) => {
+      try {
+        const { address } = req.params;
+        const reputation = await this.bridge.getReputation(address);
+        res.json({ address, reputation });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get all nodes sorted by trust score
+    this.app.get('/reputation/nodes/sorted', async (req, res) => {
+      try {
+        const result = await this.bridge.getNodesSortedByTrustScore();
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Register a node
+    this.app.post('/reputation/nodes/register', async (req, res) => {
+      try {
+        const { address } = req.body;
+        if (!address) {
+          return res.status(400).json({ error: 'address is required' });
+        }
+        const receipt = await this.bridge.registerNode(address);
+        res.json({
+          success: true,
+          message: 'Node registered successfully',
+          address,
+          transactionHash: receipt.transactionHash
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Error handling middleware
     this.app.use((error, req, res, next) => {
       console.error('API Error:', error);
